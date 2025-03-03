@@ -17,10 +17,19 @@ public class WordList extends WrappedImmutableSet<Word> {
 
     private final CharacterSet characterSet;
     private final Map<Word, Set<Word>> prefixLookupMap = new ConcurrentHashMap<>();
+    private final Set<Word>[] firstcharLookupMap;
 
     private WordList(CharacterSet characterSet, Stream<String> words) {
         super(words.map(characterSet::transform).filter(Objects::nonNull).map(x -> new Word(x.toCharArray())).collect(Collectors.toSet()));
         this.characterSet = characterSet;
+        int max = characterSet.stream().map(x -> (int) x).max(Integer::compareTo).orElse(0);
+        firstcharLookupMap = new Set[max + 1];
+        for(char c : characterSet) {
+            firstcharLookupMap[c] = new HashSet<>();
+        }
+        for(Word word : this) {
+            firstcharLookupMap[word.chars()[0]].add(word);
+        }
     }
 
     public static WordList fromArray(CharacterSet characterSet, String... words) {
@@ -87,7 +96,29 @@ public class WordList extends WrappedImmutableSet<Word> {
         return returnMap;
     }
 
+    /**
+     * Returns a thread safe map of word lists seperated by thier first character
+     */
+    public Map<Character, WordList> firstCharacterMap() {
+        Map<Character, Set<Word>> stringSetMap = new ConcurrentHashMap<>();
+
+        parallelStream().forEach(word -> {
+            Set<Word> wordSet;
+            synchronized (stringSetMap) {
+                wordSet = stringSetMap.computeIfAbsent(word.chars()[0], k -> ConcurrentHashMap.newKeySet());
+            }
+            wordSet.add(word);
+        });
+
+        Map<Character, WordList> returnMap = new HashMap<>();
+        stringSetMap.keySet().parallelStream().forEach(key -> returnMap.put(key, fromCollection(characterSet, stringSetMap.get(key))));
+        return returnMap;
+    }
+
     public Set<Word> startsWith(Word key) {
+        if(key.chars().length == 1) {
+            return firstcharLookupMap[key.chars()[0]];
+        }
         Set<Word> startsWith = prefixLookupMap.get(key);
         if(startsWith != null) {
             return startsWith;
@@ -105,6 +136,10 @@ public class WordList extends WrappedImmutableSet<Word> {
             prefixLookupMap.put(key, startsWith);
         }
         return startsWith;
+    }
+
+    public Set<Word> startsWith(char startsWith) {
+        return firstcharLookupMap[startsWith];
     }
 
     private Word reverseTail(Word word) {

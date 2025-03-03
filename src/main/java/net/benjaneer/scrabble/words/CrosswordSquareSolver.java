@@ -26,27 +26,36 @@ public class CrosswordSquareSolver {
         }
 
         for(Integer length : lengthOrder) {
+            if(length < 2) {
+                LOGGER.info("Skipping invalid size {} for crossword square", length);
+                continue;
+            }
             LOGGER.info("Searching for crossword square with size {}", length);
-            WordList wordListPartition = lengthMap.get(length);
-
-            List<Word> wordList = wordListPartition.parallelStream().toList();
-            int wordCount = wordList.size();
-
-            Future<Set<CrosswordBoard>>[] futures = new Future[wordCount];
 
             try (ExecutorService threadPool = Executors.newFixedThreadPool(64)) {
+                WordList wordSizeListPartition = lengthMap.get(length);
 
-                for(int i = 0; i < wordCount; i++) {
-                    CrosswordBoard seededBoard = new CrosswordBoard(length).cloneAndAppend(wordList.get(i).chars());
-                    futures[i] = threadPool.submit(() -> findNextWords(wordListPartition, length, 1, seededBoard));
+                List<Future<Set<CrosswordBoard>>> futures = new ArrayList<>();
+
+                for(WordList wordListPartition : wordSizeListPartition.firstCharacterMap().values()) {
+                    List<Word> wordList = wordListPartition.stream().toList();
+
+                    for(int i = 0; i < wordListPartition.size(); i++) {
+                        for(int j = i + 1; j < wordListPartition.size(); j++) {
+                            CrosswordBoard seededBoard = new CrosswordBoard(wordList.get(i), wordList.get(j));
+                            futures.add(threadPool.submit(() -> findNextWords(wordSizeListPartition, length, 1, seededBoard)));
+                        }
+                    }
                 }
+                int wordCount = futures.size();
 
                 Set<CrosswordBoard> crosswordBoards = new HashSet<>();
                 for(int i = 0; i < wordCount; i++) {
-                    LOGGER.info("Waiting on word {} of {} for length {}", i + 1, wordCount, length);
+                    LOGGER.info("Waiting on board {} of {} for length {}", i + 1, wordCount, length);
                     try {
-                        Set<CrosswordBoard> result = futures[i].get();
+                        Set<CrosswordBoard> result = futures.removeFirst().get();
                         if(result != null) {
+                            LOGGER.info("Board {} of {} for length {} has {} valid boards", i + 1, wordCount, length, result.size());
                             crosswordBoards.addAll(result);
                         }
                     } catch (ExecutionException | InterruptedException e) {
@@ -54,7 +63,7 @@ public class CrosswordSquareSolver {
                     }
                 }
 
-                if(crosswordBoards.size() > 1) {
+                if(!crosswordBoards.isEmpty()) {
                     return crosswordBoards;
                 }
             }
@@ -67,21 +76,28 @@ public class CrosswordSquareSolver {
     }
 
     private static Set<CrosswordBoard> findNextWords(WordList wordList, int length, int depth, CrosswordBoard previousWords) {
+        //Recursive exit condition
         Set<CrosswordBoard> solutions = null;
         if(depth == length) {
             solutions = new HashSet<>();
             solutions.add(previousWords);
             return solutions;
         }
-        CrosswordBoard[] seededBoards = new CrosswordBoard[wordList.size()];
-        Iterator<Word> wordIterator = wordList.iterator();
-        for(int i = 0; i < wordList.size(); i++) {
+
+        //Generate next set of findNextWords inputs
+        Set<Word> startsWithSet = wordList.startsWith(previousWords.crossword[depth][0]);
+        int startsWithSize = startsWithSet.size();
+        CrosswordBoard[] seededBoards = new CrosswordBoard[startsWithSize];
+        Iterator<Word> wordIterator = startsWithSet.iterator();
+        for(int i = 0; i < startsWithSize; i++) {
             Word word = wordIterator.next();
             if (!previousWords.contains(word.chars())
                     && couldWork(wordList, length, depth, previousWords, word)) {
-                seededBoards[i] = previousWords.cloneAndAppend(word.chars());
+                seededBoards[i] = previousWords.cloneAndAppend(word.chars(), depth);
             }
         }
+
+        //Recursive findNextWords call
         for (CrosswordBoard nextLayer : seededBoards) {
             if(nextLayer != null) {
                 Set<CrosswordBoard> potentialSolutions = findNextWords(wordList, length, depth + 1, nextLayer);
@@ -98,30 +114,24 @@ public class CrosswordSquareSolver {
     }
 
     private static char[] extractColumn(CrosswordBoard previousWords, int column, int depth, Word nextWord) {
-        int prefixSize = depth + 1;
-        char[] word = new char[prefixSize];
-        for(int i = 0; i < prefixSize - 1; i++) {
+        char[] word = new char[depth + 1];
+        for(int i = 0; i < depth; i++) {
             word[i] = previousWords.crossword[i][column];
         }
-        word[prefixSize - 1] = nextWord.chars()[column];
+        word[depth] = nextWord.chars()[column];
         return word;
     }
 
     private static boolean couldWork(WordList wordList, int length, int depth, CrosswordBoard previousWords, Word nextWord) {
-        Word[] prefixes = new Word[length];
+        Word[] prefixes = new Word[length - 1];
 
-        boolean finalRow = false;
-
-        for(int i = 0; i < length; i++) {
+        for(int i = 0; i < length - 1; i++) {
             prefixes[i] = new Word(
-                    extractColumn(previousWords, i, depth, nextWord)
+                    extractColumn(previousWords, i + 1, depth, nextWord)
             );
         }
-        if(depth + 1 == length) {
-            finalRow = true;
-        }
 
-        if(finalRow) {
+        if(depth + 1 == length) {
             for(Word prefix : prefixes) {
                 if(prefix.equals(nextWord)
                         || previousWords.contains(prefix.chars())
@@ -131,22 +141,15 @@ public class CrosswordSquareSolver {
             }
             return true;
         }
+
         for(Word prefix : prefixes) {
             Set<Word> possibilities = wordList.startsWith(prefix);
-            if(possibilities.isEmpty()) {
-                return false;
-            }
-            boolean couldWork = false;
             for(Word possibility : possibilities) {
                 if(!previousWords.contains(possibility.chars()) && !possibility.equals(nextWord)) {
-                    couldWork = true;
-                    break;
+                    return true;
                 }
             }
-            if(!couldWork) {
-                return false;
-            }
         }
-        return true;
+        return false;
     }
 }

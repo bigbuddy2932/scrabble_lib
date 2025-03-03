@@ -20,11 +20,11 @@ public class CrosswordSquareSolverTest {
     @Test
     public void findLargestPossibleCrosswordSquareTest() {
         Set<CrosswordBoard> boardSet = CrosswordSquareSolver.findLargestPossibleCrosswordSquare(TEST_WORD_LIST);
-        Assertions.assertEquals(2, boardSet.size());
+        Assertions.assertEquals(1, boardSet.size());
         boardSet.forEach(this::validateNoRepeatedWords);
 
         boardSet = CrosswordSquareSolver.findLargestPossibleCrosswordSquare(WordList.scrabble2019List(), List.of(3));
-        Assertions.assertEquals(9187509, boardSet.size());
+        Assertions.assertEquals(4601029, boardSet.size());
         boardSet.forEach(this::validateNoRepeatedWords);
     }
 
